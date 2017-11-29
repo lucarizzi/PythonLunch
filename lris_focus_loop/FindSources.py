@@ -9,8 +9,7 @@ The method findAll returns a matrix corresponding to the grid.
 
 import numpy as np
 import math
-
-import multiprocessing.pool as mpPool
+import queue
 
 class Centroid1D:
     def __init__(self):
@@ -208,35 +207,6 @@ class FindSources:
                 if fwhm > 0 and fwhm < maxFWHM and isInBox (xc, yc, x, y, x1, y1):
                     result.append(centroid)
         return result
-    
-    def findAllParallel(self, gridSize, sfactor=0.9, epsilon=1E-5, nProcess=4):
-        """
-        Parallel version of findAll.
-        This is slower than findAll because of the GIL.
-        """
-        def isInBox (xc, yc, x0, y0, x1, y1):
-            return (x0<=xc) and (xc<x1) and (y0<=yc) and (yc<y1)
-        
-        def worker (idx):
-            y = gridSize * (idx // gWidth)
-            x = gridSize * (idx % gWidth)
-            x1, y1 = x + gridSize, y + gridSize
-            #print ("idx=%d, %d, %d" % (idx, x, y))
-            centroid = self.centroid2D (x, y, x+gridSize, y+gridSize, sfactor, epsilon)
-            xc,yc,fwhm,contrast,dist,cnt = centroid
-            if fwhm > 0 and fwhm < maxFWHM and isInBox (xc, yc, x, y, x1, y1):
-                out[idx] = centroid
-                
-        maxFWHM = int(gridSize)
-        gWidth = self.imgWidth // gridSize
-        gHeight = self.imgHeight // gridSize
-        gSize = gWidth * gHeight
-        #print ("gwidth", gWidth, gHeight, gSize)
-        
-        out = [None] * gSize
-        with mpPool.ThreadPool (processes=nProcess) as pool:
-            pool.map(worker, range(gSize))
-        return [x for x in out if x != None ]
     
     def bgSubtract(self, arr1d, deg=2):
         """
