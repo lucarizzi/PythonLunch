@@ -4,8 +4,9 @@ import numpy as np
 
 class MosaicFitsReader:
     def __init__(self, fname=None):
-        self.fname = fname
-        self.data = self.read(fname)
+        if fname != None:
+            self.fname = fname
+            self.data = self.read(fname)
     
     def getImage(self):
         return self.data    
@@ -17,8 +18,8 @@ class MosaicFitsReader:
     def _getRegion (self, reg):
         def reorder (x0, x1):
             if x0 > x1:
-                return slice(x0-1, x1-1, -1)
-            return slice(x0-1, x1-1, 1)
+                return slice(x0-1, x1-2, -1)
+            return slice(x0-1, x1, 1)
 
         return reorder(reg[0], reg[1]), reorder(reg[2], reg[3])
 
@@ -44,25 +45,28 @@ class MosaicFitsReader:
                     if len(img) == 0:
                         img = np.zeros((detSize[3],detSize[1]))
 
-                    srcReg = self._getRegion(self._splitFormat(header.get('DATASEC')))
-                    dstReg = self._getRegion(self._splitFormat(header.get('DETSEC')))
-
-                    regMinx, regMaxx, regMiny, regMaxy = min(dstReg[0].start, dstReg[0].stop), \
-                        max(dstReg[0].start, dstReg[0].stop), \
-                        min(dstReg[1].start, dstReg[1].stop), \
-                        max(dstReg[1].start, dstReg[1].stop)
+                    srcReg = self._splitFormat(header.get('DATASEC'))
+                    dstReg = self._splitFormat(header.get('DETSEC'))
+                    
+                    srcIdx = self._getRegion(srcReg)
+                    dstIdx = self._getRegion(dstReg)
+                    
+                    #print (srcReg, dstReg)
+                    regMinx, regMaxx, regMiny, regMaxy = min(dstReg[0], dstReg[1]), \
+                        max(dstReg[0], dstReg[1]), \
+                        min(dstReg[2], dstReg[3]), \
+                        max(dstReg[2], dstReg[3])
 
                     minx = min(minx, regMinx)
                     maxx = max(maxx, regMaxx)
                     miny = min(miny, regMiny)
                     maxy = max(maxy, regMaxy)
-
-                    img[dstReg[1],dstReg[0]] = h.data[srcReg[1], srcReg[0]]
+                    img[dstIdx[1],dstIdx[0]] = h.data[srcIdx[1], srcIdx[0]]
                     info.append((regMinx, regMaxx, regMiny, regMaxy))
                 except Exception as e:
                     print ("While reading", fname, e)
                     return None
-            self.minmax = minx,maxx,miny,maxx
+            self.minmax = minx,maxx,miny,maxy
             self.info = info
             return img
 
