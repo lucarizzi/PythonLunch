@@ -13,9 +13,9 @@ import queue
 
 class Centroid1D:
     def __init__(self):
-        pass
+        self.removeBackground = self.removeBackgroundGrad
     
-    def removeBackground (self, arr):
+    def removeBackgroundFlat (self, arr):
         def stats (arr):
             return np.min(arr), np.std(arr)
         """
@@ -49,7 +49,7 @@ class Centroid1D:
         One step 1D centroiding algo.
         Returns centroid position
         """
-        arr = self.removeBackgroundGrad(arr)
+        arr = self.removeBackground(arr)
         l = arr.shape[0]
         ixs = np.arange(l)
         ixs2 = ixs * ixs
@@ -83,6 +83,10 @@ class FindSources:
         self.iimg = self.integral (imgData)
         self.minContrast = minContrast
         self.cAlgo = Centroid1D()
+        self.isCentOKFunc = self.isCentOK
+    
+    def isCentOK (self, varx, vary, fwhm, half):
+        return varx > 0 and vary > 0 and fwhm < half
     
     def integral (self, img):
         return img.cumsum(axis=1).cumsum(axis=0)
@@ -126,20 +130,22 @@ class FindSources:
         ycen = y0 + height//2
         size = width if width < height else height
         maxSize = size
-        minSize = size // 5
+        minSize = max(3, size // 5)
         half = size//2
+        maxStd = size // 3
         maxHalf = half
         maxx =  self.imgWidth - size
         maxy = self.imgHeight - size
         width1 = self.imgWidth - 1
         height1 = self.imgHeight -1
         fwhm = 0
-        std = 0
+        std, varx, vary = 0, 0, 0
         ctl = -1
         dist = -1
         findCentroid = self.cAlgo.findCentroid
         getContrast = self.cAlgo.getContrast
         mct = self.minContrast
+        centOK = self.isCentOK
         
         for i in range(nloop):            
             x0 = max(x0, 1)            
@@ -166,24 +172,23 @@ class FindSources:
             nxcen += x0
             nycen += y0
             dist = math.hypot (nxcen-xcen, nycen-ycen)        
-            std = math.sqrt(varx+vary) 
-            if std == 0: 
+            std = math.sqrt(varx+vary)
+            fwhm = std * 2.35 / 1.41
+            if not centOK(varx, vary, fwhm, half): #varx == 0 or vary == 0 or fwhm > half:
+                fwhm = 0
                 break
             if dist < epsilon:
                 xcen, ycen = nxcen, nycen
                 break                
             xcen, ycen = nxcen, nycen  
-            nhalf = int(std * sfactor + 0.5)            
-            half = min(max (nhalf, minSize), maxSize)
+            nhalf = int(fwhm * 2 * sfactor + 0.5)            
+            half = min(max (nhalf, minSize), maxHalf)
             size = half + half + 1
-            size = max(5, size)
             x0 = int(xcen - half)
             y0 = int(ycen - half)
-        if std > 0:
-            fwhm = std * 2.35 / 1.41  
         return xcen, ycen, fwhm, ctl, dist, i    
     
-    def findAll(self, gridSize, sfactor=0.9, epsilon=1E-5):
+    def findAll(self, gridSize, sfactor=0.9, epsilon=1E-5, incr=0, nloop=20):
         """
         Returns a list of centroids.
         A centroid is (xcenter, ycenter, fwhm, contrast, dist)
@@ -196,13 +201,15 @@ class FindSources:
         height, width = self.orgImgData.shape
         #ny = int((height-1) / gridSize)
         #nx = int((width-1) / gridSize)
+        if incr == 0:
+            incr = gridSize            
         maxFWHM = gridSize//1
         result = []
-        for y in range(gridSize//2,height-gridSize-1, gridSize):
+        for y in range(gridSize//2,height-gridSize-1, incr):
             y1 = y+gridSize
-            for x in range(gridSize//2,width-gridSize-1, gridSize):
+            for x in range(gridSize//2,width-gridSize-1, incr):
                 x1 = x+gridSize
-                centroid = self.centroid2D(x, y, x1, y1, sfactor, epsilon)
+                centroid = self.centroid2D(x, y, x1, y1, sfactor, epsilon, nloop=nloop)
                 xc,yc,fwhm,contrast,dist,cnt = centroid
                 if fwhm > 0 and fwhm < maxFWHM and isInBox (xc, yc, x, y, x1, y1):
                     result.append(centroid)
@@ -217,4 +224,44 @@ class FindSources:
         func = np.poly1d (results)
         return arr1d - func(xs)
         
+def centroid1DLoop(arr, fromIdx, toIdx, nLoops=10, epsilon=1E-1):
+    """
+    Finds the centroid by repeatedly centering and recalculating 
+    until the centroid position changes by less than epsilon.
+    
+    Returns status, centroid position, standard deviation, iterations
+    
+    status: 0 OK, -1 bad centroid or no signal
+    centroid position: position relative to input array, ie. 0 is first pixel
+    standard deviation: standard deviation as calculated by the centroid algorithm (assumed Gaussian stats)
+    iterations: number of iterations needed until change is less than epsilon
+    """
+    def limit(x):
+        if x < 0: return 0
+        if x >= length: return length
+        return x
+    
+    length = len(arr)
+    radius = (toIdx - fromIdx)/2
+    lastCenPos = -9999
+    f1d = Centroid1D()
+    for i in range(nLoops):
+        fromIdx = int(limit(fromIdx))
+        toIdx = int(limit(fromIdx + radius + radius + 0.5))
+        pos, cenVar = f1d.findCentroid(arr[fromIdx:toIdx])
+        cenStd = math.sqrt(abs(cenVar))
+        cenPos = pos + fromIdx
+        #print (i, fromIdx, toIdx, cenPos, cenStd, lastCenPos)
+        
+        if cenPos < fromIdx or toIdx < cenPos:
+            return -1, 0, 0, i
+        
+        if abs(lastCenPos - cenPos) < epsilon:
+            return 0, cenPos, cenStd, i
+        if cenStd > radius/3:
+            return -1, cenPos, cenStd, i
+        fromIdx = cenPos - radius
+        lastCenPos = cenPos
+        
+    return -1, cenPos, cenStd, i      
         
